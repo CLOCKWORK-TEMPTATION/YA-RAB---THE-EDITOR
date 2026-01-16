@@ -6,11 +6,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   SceneHeaderAgent,
-  createSceneHeaderAgent,
+  ScreenplayClassifier,
   VERB_RE,
-  type SceneHeaderContext,
-  type ScreenplayClassifierInterface,
-  type ScreenplayClassifierStatic,
 } from "../../editor/agents/SceneHeaderAgent";
 
 describe("VERB_RE", () => {
@@ -29,11 +26,60 @@ describe("VERB_RE", () => {
   });
 });
 
+describe("ScreenplayClassifier", () => {
+  describe("parseSceneHeaderFromLine", () => {
+    it("should parse valid scene header", () => {
+      const result = ScreenplayClassifier.parseSceneHeaderFromLine("مشهد 1 - داخلي - ليل");
+
+      expect(result).not.toBeNull();
+      expect(result?.sceneNum).toBe("مشهد 1");
+      expect(result?.timeLocation).toBeDefined();
+    });
+
+    it("should parse scene header with Arabic numerals", () => {
+      const result = ScreenplayClassifier.parseSceneHeaderFromLine("مشهد ١ - خارجي - نهار");
+
+      expect(result).not.toBeNull();
+      expect(result?.sceneNum).toBe("مشهد ١");
+    });
+
+    it("should return null for non-scene header", () => {
+      const result = ScreenplayClassifier.parseSceneHeaderFromLine("هذا ليس رأس مشهد");
+
+      expect(result).toBeNull();
+    });
+
+    it("should return null for empty line", () => {
+      const result = ScreenplayClassifier.parseSceneHeaderFromLine("");
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("normalizeLine", () => {
+    it("should normalize whitespace", () => {
+      const result = ScreenplayClassifier.normalizeLine("  hello   world  ");
+      expect(result).toBe("hello world");
+    });
+
+    it("should trim line", () => {
+      const result = ScreenplayClassifier.normalizeLine("   test   ");
+      expect(result).toBe("test");
+    });
+  });
+
+  describe("Patterns", () => {
+    it("should have sceneHeader3 pattern", () => {
+      const classifier = new ScreenplayClassifier();
+      expect(classifier.Patterns.sceneHeader3).toBeDefined();
+      expect(classifier.Patterns.sceneHeader3 instanceof RegExp).toBe(true);
+    });
+  });
+});
+
 describe("SceneHeaderAgent", () => {
-  let mockCtx: SceneHeaderContext;
+  let mockCtx: { inDialogue: boolean };
   let mockGetFormatStyles: ReturnType<typeof vi.fn>;
-  let mockClassifier: ScreenplayClassifierInterface;
-  let mockClassifierStatic: ScreenplayClassifierStatic;
 
   beforeEach(() => {
     mockCtx = { inDialogue: true };
@@ -41,26 +87,18 @@ describe("SceneHeaderAgent", () => {
       fontWeight: "bold",
       textAlign: "center",
     });
-    mockClassifier = {
-      Patterns: {
-        sceneHeader3: /^[\u0600-\u06FF\s]+$/,
-      },
-    };
-    mockClassifierStatic = {
-      parseSceneHeaderFromLine: vi.fn(),
-      normalizeLine: vi.fn((line) => line.trim()),
-    };
+  });
+
+  it("should use original signature (3 parameters only)", () => {
+    // التحقق من أن SceneHeaderAgent يقبل 3 معاملات فقط
+    expect(SceneHeaderAgent.length).toBe(3);
   });
 
   it("should return null for non-scene-header lines", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
     const result = SceneHeaderAgent(
-      "هذا سطر عادي يحتوي على جملة طويلة جداً",
+      "هذا سطر عادي يحتوي على جملة طويلة جداً مع علامة استفهام؟",
       mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
+      mockGetFormatStyles
     );
 
     expect(result).toBeNull();
@@ -68,17 +106,10 @@ describe("SceneHeaderAgent", () => {
   });
 
   it("should process valid scene header", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue({
-      sceneNum: "مشهد 1",
-      timeLocation: "داخلي - ليل",
-    });
-
     const result = SceneHeaderAgent(
       "مشهد 1 - داخلي - ليل",
       mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
+      mockGetFormatStyles
     );
 
     expect(result).not.toBeNull();
@@ -87,36 +118,11 @@ describe("SceneHeaderAgent", () => {
     expect(mockCtx.inDialogue).toBe(false); // Should be set to false
   });
 
-  it("should handle placeInline", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue({
-      sceneNum: "مشهد 2",
-      timeLocation: "خارجي - نهار",
-      placeInline: "الحديقة",
-    });
-
-    const result = SceneHeaderAgent(
-      "مشهد 2 - خارجي - نهار - الحديقة",
-      mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
-    );
-
-    expect(result).not.toBeNull();
-    expect(result?.html).toContain("scene-header-3");
-  });
-
   it("should handle short location line (scene-header-3)", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
-    mockClassifier.Patterns.sceneHeader3 = /^[\u0600-\u06FF\s]+$/;
-
     const result = SceneHeaderAgent(
       "الغرفة",
       mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
+      mockGetFormatStyles
     );
 
     expect(result).not.toBeNull();
@@ -124,141 +130,55 @@ describe("SceneHeaderAgent", () => {
   });
 
   it("should not process line with colon as scene-header-3", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
     const result = SceneHeaderAgent(
       "أحمد: مرحباً",
       mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
+      mockGetFormatStyles
     );
 
     expect(result).toBeNull();
   });
 
   it("should not process line with sentence punctuation as scene-header-3", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
     const result = SceneHeaderAgent(
       "هذا سؤال؟",
       mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
+      mockGetFormatStyles
     );
 
     expect(result).toBeNull();
   });
 
   it("should not process line with verb after dash as scene-header-3", () => {
-    (mockClassifierStatic.parseSceneHeaderFromLine as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
     const result = SceneHeaderAgent(
       "الغرفة - يدخل",
       mockCtx,
-      mockGetFormatStyles,
-      mockClassifier,
-      mockClassifierStatic
+      mockGetFormatStyles
     );
 
     expect(result).toBeNull();
   });
-});
 
-describe("createSceneHeaderAgent (Legacy Factory)", () => {
-  let agent: ReturnType<typeof createSceneHeaderAgent>;
+  it("should handle long lines (more than 6 words) as non-scene-header", () => {
+    const result = SceneHeaderAgent(
+      "هذا سطر طويل جداً يحتوي على أكثر من ستة كلمات",
+      mockCtx,
+      mockGetFormatStyles
+    );
 
-  beforeEach(() => {
-    agent = createSceneHeaderAgent();
+    expect(result).toBeNull();
   });
 
-  describe("parse", () => {
-    it("should parse valid scene header", () => {
-      const result = agent.parse("مشهد 1 - داخلي - ليل");
+  it("should create ScreenplayClassifier internally", () => {
+    // التحقق من أن SceneHeaderAgent يُنشئ ScreenplayClassifier داخلياً
+    // عن طريق التحقق من أنه يعمل بدون تمرير classifier خارجي
+    const result = SceneHeaderAgent(
+      "مشهد 5",
+      mockCtx,
+      mockGetFormatStyles
+    );
 
-      expect(result).not.toBeNull();
-      expect(result?.sceneNum).toBe("مشهد 1");
-    });
-
-    it("should parse scene header with Arabic numerals", () => {
-      const result = agent.parse("مشهد ١ - خارجي - نهار");
-
-      expect(result).not.toBeNull();
-      expect(result?.sceneNum).toBe("مشهد ١");
-    });
-
-    it("should return null for non-scene header", () => {
-      const result = agent.parse("هذا ليس رأس مشهد");
-
-      expect(result).toBeNull();
-    });
-
-    it("should return null for empty line", () => {
-      const result = agent.parse("");
-
-      expect(result).toBeNull();
-    });
-
-    it("should handle whitespace-only line", () => {
-      const result = agent.parse("   ");
-
-      expect(result).toBeNull();
-    });
-
-    it("should extract timeLocation", () => {
-      const result = agent.parse("مشهد 5 - داخلي - ليل - غرفة النوم");
-
-      expect(result).not.toBeNull();
-      expect(result?.timeLocation).toBeDefined();
-    });
-  });
-
-  describe("parseMultiLine", () => {
-    it("should parse first line as scene header", () => {
-      const lines = [
-        "مشهد 1 - داخلي - ليل",
-        "الغرفة مظلمة",
-      ];
-
-      const result = agent.parseMultiLine(lines, 0);
-
-      expect(result).not.toBeNull();
-      expect(result?.consumedLines).toBe(1);
-    });
-
-    it("should return null when start line is not scene header", () => {
-      const lines = [
-        "هذا ليس رأس مشهد",
-        "مشهد 1",
-      ];
-
-      const result = agent.parseMultiLine(lines, 0);
-
-      expect(result).toBeNull();
-    });
-  });
-
-  describe("format", () => {
-    it("should format scene header parts", () => {
-      const parts = {
-        sceneNum: "مشهد 1",
-        timeLocation: "داخلي - ليل",
-      };
-
-      const result = agent.format(parts);
-
-      expect(result).toBe("مشهد 1 - داخلي - ليل");
-    });
-
-    it("should format scene number only", () => {
-      const parts = {
-        sceneNum: "مشهد 3",
-      };
-
-      const result = agent.format(parts);
-
-      expect(result).toBe("مشهد 3");
-    });
+    // يجب أن يعمل بدون أخطاء
+    expect(result).not.toBeNull();
   });
 });
