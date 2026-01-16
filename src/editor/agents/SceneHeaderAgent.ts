@@ -2,14 +2,8 @@
 // =====================================
 // Scene Header Agent from THEEditor.tsx (Lines 8505-8567)
 //
-// Responsibilities:
-// - Parse complex Arabic scene headers
-// - Handle multi-line scene headers
-// - Extract scene metadata
-//
 // منقول 1:1 من THEEditor.tsx
-// NO classification logic (uses external classifier)
-// NO state management
+// التوقيع الأصلي محفوظ بالكامل
 
 import type React from "react";
 
@@ -39,51 +33,95 @@ export interface SceneHeaderAgentResult {
   processed: boolean;
 }
 
-/**
- * Interface لـ Patterns المستخدمة
- */
-export interface SceneHeaderPatterns {
-  sceneHeader3: RegExp;
-}
-
-/**
- * Interface لـ ScreenplayClassifier المستخدم
- */
-export interface ScreenplayClassifierInterface {
-  Patterns: SceneHeaderPatterns;
-}
-
-/**
- * Static methods من ScreenplayClassifier
- */
-export interface ScreenplayClassifierStatic {
-  parseSceneHeaderFromLine(line: string): ParsedSceneHeader | null;
-  normalizeLine(line: string): string;
-}
-
 // ==================== VERB_RE ====================
 // منقول 1:1 من THEEditor.tsx (سطر 85-86)
 
 export const VERB_RE =
   /(يدخل|يخرج|يقف|يجلس|ينظر|يتحرك|يقترب|يبتعد|يركض|يمشي|يتحدث|يصرخ|تدخل|تخرج|تقف|تجلس|تنظر|تتحرك|تقترب|تبتعد|تركض|تمشي|تتحدث|تصرخ)/;
 
+// ==================== ScreenplayClassifier Stub ====================
+// Stub للـ ScreenplayClassifier المطلوب من THEEditor.tsx
+// يُستخدم للحفاظ على التوقيع الأصلي 1:1
+
+const SCENE_HEADER_RE = /^\s*(?:مشهد|م\.|scene)\s*([0-9٠-٩]+)\s*(?:[-–—:،]\s*)?(.*)$/i;
+const TIME_LOCATION_RE = /(داخلي|خارجي|د\.|خ\.|interior|exterior|int\.|ext\.)\s*[-–—]?\s*(ليل|نهار|صباح|مساء)?/i;
+
+/**
+ * @class ScreenplayClassifier
+ * @description Stub class للتوافق مع THEEditor.tsx
+ * يحتوي فقط على الـ methods المستخدمة في SceneHeaderAgent
+ */
+export class ScreenplayClassifier {
+  /**
+   * Patterns المستخدمة في التصنيف
+   */
+  Patterns = {
+    sceneHeader3: /^[\u0600-\u06FF\s\-–—]+$/,
+  };
+
+  /**
+   * @static parseSceneHeaderFromLine
+   * @description تحليل سطر رأس مشهد
+   */
+  static parseSceneHeaderFromLine(line: string): ParsedSceneHeader | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+
+    const match = trimmed.match(SCENE_HEADER_RE);
+    if (!match) return null;
+
+    const sceneNumber = match[1];
+    const remainder = (match[2] || "").trim();
+
+    const parts: ParsedSceneHeader = {
+      sceneNum: `مشهد ${sceneNumber}`,
+    };
+
+    if (remainder) {
+      // تحليل الوقت/المكان
+      const timeMatch = remainder.match(TIME_LOCATION_RE);
+      if (timeMatch) {
+        parts.timeLocation = remainder;
+      } else {
+        parts.timeLocation = remainder;
+      }
+
+      // التحقق من وجود مكان inline
+      const dashParts = remainder.split(/[-–—]/);
+      if (dashParts.length > 2) {
+        parts.placeInline = dashParts[dashParts.length - 1].trim();
+      }
+    }
+
+    return parts;
+  }
+
+  /**
+   * @static normalizeLine
+   * @description تطبيع السطر للمعالجة
+   */
+  static normalizeLine(line: string): string {
+    return line.trim().replace(/\s+/g, " ");
+  }
+}
+
 // ==================== buildSceneHeaderDOM ====================
-// منقول 1:1 من THEEditor.tsx (سطر 562-597)
+// منقول 1:1 من THEEditor.tsx (سطر 568-597)
+// التوقيع الأصلي: (text, getStylesFn) - بدون معامل ثالث
 
 /**
  * @function buildSceneHeaderDOM
- * @description بناء عنصر DOM لرأس المشهد بناءً على النص المُحلّل
+ * @description بناء عنصر DOM لرأس المشهد بناءً على النص المُحلّل (دالة عامة مُصدَّرة)
+ * منقول 1:1 من THEEditor.tsx
  * @param text - نص رأس المشهد
  * @param getStylesFn - دالة للحصول على الـ styles
- * @param parseSceneHeaderFromLine - دالة تحليل رأس المشهد
  * @returns HTML string لرأس المشهد أو undefined إذا فشل التحليل
  */
 export const buildSceneHeaderDOM = (
   text: string,
   getStylesFn: (formatType: string) => React.CSSProperties,
-  parseSceneHeaderFromLine: (line: string) => ParsedSceneHeader | null,
 ): string | undefined => {
-  const sceneHeaderParts = parseSceneHeaderFromLine(text);
+  const sceneHeaderParts = ScreenplayClassifier.parseSceneHeaderFromLine(text);
 
   if (sceneHeaderParts) {
     const container = document.createElement("div");
@@ -111,7 +149,8 @@ export const buildSceneHeaderDOM = (
 };
 
 // ==================== SceneHeaderAgent ====================
-// منقول 1:1 من THEEditor.tsx (سطر 8507-8566)
+// منقول 1:1 من THEEditor.tsx (سطر 8515-8566)
+// التوقيع الأصلي: (line, ctx, getFormatStylesFn) - 3 معاملات فقط
 
 /**
  * @function SceneHeaderAgent
@@ -120,28 +159,21 @@ export const buildSceneHeaderDOM = (
  * @param line - السطر المراد معالجته
  * @param ctx - السياق (هل نحن في حوار أم لا)
  * @param getFormatStylesFn - دالة للحصول على الـ styles حسب النوع
- * @param classifier - instance من ScreenplayClassifier
- * @param classifierStatic - static methods من ScreenplayClassifier
  * @returns HTML للرأس المنسق أو null إذا لم يكن رأس مشهد
  */
 export const SceneHeaderAgent = (
   line: string,
-  ctx: SceneHeaderContext,
+  ctx: { inDialogue: boolean },
   getFormatStylesFn: (formatType: string) => React.CSSProperties,
-  classifier: ScreenplayClassifierInterface,
-  classifierStatic: ScreenplayClassifierStatic,
 ): SceneHeaderAgentResult | null => {
+  const classifier = new ScreenplayClassifier();
   const Patterns = classifier.Patterns;
   const trimmedLine = line.trim();
 
-  const parsed = classifierStatic.parseSceneHeaderFromLine(trimmedLine);
+  const parsed = ScreenplayClassifier.parseSceneHeaderFromLine(trimmedLine);
   if (parsed) {
     // استخدام الدالة الموحدة buildSceneHeaderDOM
-    let html = buildSceneHeaderDOM(
-      trimmedLine,
-      getFormatStylesFn,
-      classifierStatic.parseSceneHeaderFromLine,
-    ) || "";
+    let html = buildSceneHeaderDOM(trimmedLine, getFormatStylesFn) || "";
 
     if (parsed.placeInline) {
       const placeDiv = document.createElement("div");
@@ -155,7 +187,7 @@ export const SceneHeaderAgent = (
     return { html, processed: true };
   }
 
-  const normalized = classifierStatic.normalizeLine(trimmedLine);
+  const normalized = ScreenplayClassifier.normalizeLine(trimmedLine);
   const wordCount = normalized ? normalized.split(/\s+/).filter(Boolean).length : 0;
   const hasDash = /[-–—]/.test(normalized);
   const hasColon = normalized.includes(":") || normalized.includes("：");
@@ -181,74 +213,3 @@ export const SceneHeaderAgent = (
 
   return null;
 };
-
-// ==================== Legacy Factory (للتوافق مع الكود القديم) ====================
-
-/**
- * @function createSceneHeaderAgent
- * @description Factory function للتوافق مع الكود القديم
- * @deprecated استخدم SceneHeaderAgent مباشرة
- */
-export function createSceneHeaderAgent(): {
-  parse: (line: string) => ParsedSceneHeader | null;
-  parseMultiLine: (lines: string[], startIndex: number) => { parts: ParsedSceneHeader; consumedLines: number } | null;
-  format: (parts: ParsedSceneHeader) => string;
-} {
-  const SCENE_PREFIX_RE = /^\s*(?:مشهد|م\.|scene)\s*([0-9٠-٩]+)\s*(?:[-–—:،]\s*)?(.*)$/i;
-  const INTERIOR_RE = /(داخلي|د\.|interior|int\.)/i;
-  const EXTERIOR_RE = /(خارجي|خ\.|exterior|ext\.)/i;
-  const TIME_RE = /(ليل|نهار|ل\.|ن\.|صباح|مساء|فجر|ظهر|عصر|مغرب|عشاء|morning|evening|day|night)/i;
-  const PHOTOMONTAGE_RE = /\(?\s*فوتو\s*مونتاج\s*\)?/i;
-
-  function parse(line: string): ParsedSceneHeader | null {
-    const trimmed = line.trim();
-    if (!trimmed) return null;
-
-    const match = trimmed.match(SCENE_PREFIX_RE);
-    if (!match) return null;
-
-    const sceneNumber = match[1];
-    const remainder = match[2] || '';
-
-    const parts: ParsedSceneHeader = {
-      sceneNum: `مشهد ${sceneNumber}`
-    };
-
-    // Extract time/location
-    let timeLocation = remainder;
-    timeLocation = timeLocation.replace(PHOTOMONTAGE_RE, '');
-    timeLocation = timeLocation.replace(/^[-–—:\s,]+|[-–—:\s,]+$/g, '');
-
-    if (timeLocation) {
-      parts.timeLocation = timeLocation.trim();
-    }
-
-    return parts;
-  }
-
-  function parseMultiLine(lines: string[], startIndex: number): { parts: ParsedSceneHeader; consumedLines: number } | null {
-    const firstParse = parse(lines[startIndex]);
-    if (!firstParse) return null;
-
-    let parts = firstParse;
-    let consumedLines = 1;
-
-    return { parts, consumedLines };
-  }
-
-  function format(parts: ParsedSceneHeader): string {
-    let result = parts.sceneNum;
-
-    if (parts.timeLocation) {
-      result += ' - ' + parts.timeLocation;
-    }
-
-    return result;
-  }
-
-  return {
-    parse,
-    parseMultiLine,
-    format
-  };
-}
