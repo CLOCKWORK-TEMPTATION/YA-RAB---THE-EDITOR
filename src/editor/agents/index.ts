@@ -6,7 +6,7 @@
 export {
   SceneHeaderAgent,
   buildSceneHeaderDOM,
-  createSceneHeaderAgent,
+  ScreenplayClassifier,
   VERB_RE,
 } from "./SceneHeaderAgent";
 
@@ -14,7 +14,4 @@ export type {
   ParsedSceneHeader,
   SceneHeaderContext,
   SceneHeaderAgentResult,
-  SceneHeaderPatterns,
-  ScreenplayClassifierInterface,
-  ScreenplayClassifierStatic,
 } from "./SceneHeaderAgent";
