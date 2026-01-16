@@ -1,281 +1,331 @@
 // src/systems/review/AdvancedAutoReviewer.ts
-// ==========================================
-// Advanced Auto Reviewer (Rule-based)
+// ==========================================================
+// Advanced Auto Reviewer (Auto-Reviewer v2)
+//
+// Extracted from THEditor.tsx lines 7947-8241
+// 1:1 migration - exact behavior preserved
 //
 // Responsibilities:
-// - Review classification results
-// - Apply rule-based corrections
-// - Ensure consistency
-//
-// NO LLM logic
-// NO classification logic
+// - Review classifications with smart rules
+// - Detect invalid type transitions
+// - Apply knowledge base patterns
+// - Suggest corrections
 
-export interface ReviewRule {
-  id: string;
-  name: string;
-  description: string;
-  condition: (context: ReviewContext) => boolean;
-  action: (context: ReviewContext) => ReviewAction;
-  priority: number;
+export interface ClassificationInput {
+  text: string;
+  type: string;
+  confidence: number;
 }
 
-export interface ReviewContext {
-  line: string;
-  currentType: string;
-  previousTypes: string[];
-  nextTypes: string[];
+export interface CorrectionSuggestion {
   index: number;
+  original: string;
+  suggested: string;
   confidence: number;
+  reason: string;
+  severity: "low" | "medium" | "high";
 }
 
-export interface ReviewAction {
-  type: 'replace' | 'flag' | 'suggest';
-  newType?: string;
-  message?: string;
-  confidence?: number;
-}
-
-export interface ReviewResult {
-  originalType: string;
-  reviewedType: string;
-  actions: ReviewAction[];
+export interface SingleLineSuggestion {
+  suggested: string;
   confidence: number;
-  issues: string[];
+  reason: string;
+  severity: "low" | "medium" | "high";
 }
 
+export interface KnowledgeBaseRule {
+  pattern: RegExp;
+  rules: {
+    confirmType: string;
+    rejectTypes: string[];
+    minConfidence: number;
+    explanation: string;
+  }[];
+}
+
+export interface ExportedKnowledgeBase {
+  rules: Array<{
+    pattern: string;
+    flags: string;
+    rules: unknown;
+  }>;
+  exportedAt: string;
+}
+
+/**
+ * نظام المراجعة التلقائي المتقدم (Auto-Reviewer v2)
+ * يقوم بفحص التصنيفات تلقائياً باستخدام قواعد ذكية ومعرفة مدمجة
+ */
 export class AdvancedAutoReviewer {
-  private rules: ReviewRule[] = [];
-  private enabledRules: Set<string> = new Set();
+  private knowledgeBase: KnowledgeBaseRule[] = [
+    {
+      pattern: /^بسم\s+الله\s+الرحمن\s+الرحيم/i,
+      rules: [
+        {
+          confirmType: "basmala",
+          rejectTypes: ["action", "scene-header-3"],
+          minConfidence: 99,
+          explanation: "البسملة يجب أن تكون باسم الله دائماً",
+        },
+      ],
+    },
+    {
+      pattern: /^مشهد\s*\d+.*[-–:].*(?:داخلي|خارجي|ليل|نهار)/i,
+      rules: [
+        {
+          confirmType: "scene-header-top-line",
+          rejectTypes: ["action", "scene-header-3"],
+          minConfidence: 95,
+          explanation: "رأس مشهد كامل يحتوي على جميع المعلومات",
+        },
+      ],
+    },
+    {
+      pattern: /^(?:قطع|انتقل|ذهاب|عودة|تلاشي|اختفاء|ظهور)\s*(?:إلى|من|في)/i,
+      rules: [
+        {
+          confirmType: "transition",
+          rejectTypes: ["action"],
+          minConfidence: 90,
+          explanation: "كلمات انتقالية معروفة",
+        },
+      ],
+    },
+    {
+      pattern: /^\(.+\)$/,
+      rules: [
+        {
+          confirmType: "parenthetical",
+          rejectTypes: ["action", "dialogue"],
+          minConfidence: 95,
+          explanation: "نص بين قوسين هو ملاحظة إخراجية",
+        },
+      ],
+    },
+    {
+      pattern: /^(?:INT\.|EXT\.|INT\/EXT\.|داخلي|خارجي|داخلي\/خارجي)/i,
+      rules: [
+        {
+          confirmType: "scene-header-3",
+          rejectTypes: ["action"],
+          minConfidence: 92,
+          explanation: "بداية رأس مشهد بمكان داخلي أو خارجي",
+        },
+      ],
+    },
+  ];
 
-  constructor() {
-    this.initializeDefaultRules();
-    this.enableAllRules();
+  /**
+   * مراجعة ذكية تلقائية مع قواعد متقدمة
+   * @param classifications قائمة التصنيفات المراد مراجعتها
+   * @returns قائمة التصحيحات المقترحة مرتبة حسب الأهمية
+   */
+  autoReview(
+    classifications: ClassificationInput[],
+  ): CorrectionSuggestion[] {
+    const corrections: CorrectionSuggestion[] = [];
+
+    classifications.forEach((c, index) => {
+      // فحص القواعد المعروفة
+      for (const kb of this.knowledgeBase) {
+        if (kb.pattern.test(c.text)) {
+          for (const rule of kb.rules) {
+            if (rule.rejectTypes.includes(c.type)) {
+              corrections.push({
+                index,
+                original: c.type,
+                suggested: rule.confirmType,
+                confidence: Math.min(100, c.confidence + 15),
+                reason: rule.explanation,
+                severity: c.confidence < 60 ? "high" : "medium",
+              });
+              break;
+            }
+          }
+        }
+      }
+
+      // فحص الانتقالات غير الصحيحة
+      if (index > 0) {
+        const prevType = classifications[index - 1].type;
+        const validNext = this.getValidNextTypes(prevType);
+
+        if (!validNext.includes(c.type) && c.confidence < 80) {
+          corrections.push({
+            index,
+            original: c.type,
+            suggested: validNext[0],
+            confidence: c.confidence - 10,
+            reason: `الانتقال من ${prevType} إلى ${c.type} غير معتاد`,
+            severity: "low",
+          });
+        }
+      }
+    });
+
+    return corrections.sort((a, b) => {
+      const severityOrder = { high: 3, medium: 2, low: 1 };
+      return severityOrder[b.severity] - severityOrder[a.severity];
+    });
   }
 
   /**
-   * Review a single classification
+   * الحصول على الأنواع الصالحة التالية بعد نوع معين
+   * @param type النوع الحالي
+   * @returns قائمة الأنواع الصالحة التالية
    */
-  review(context: ReviewContext): ReviewResult {
-    const actions: ReviewAction[] = [];
-    const issues: string[] = [];
-    let finalType = context.currentType;
-    let finalConfidence = context.confidence;
+  private getValidNextTypes(type: string): string[] {
+    const transitions: { [key: string]: string[] } = {
+      basmala: ["scene-header-top-line", "action"],
+      "scene-header-top-line": ["scene-header-3", "action"],
+      "scene-header-3": ["action", "blank"],
+      action: ["character", "transition", "action", "blank"],
+      character: ["dialogue", "parenthetical"],
+      dialogue: ["parenthetical", "action", "character", "blank"],
+      parenthetical: ["dialogue", "action", "blank"],
+      transition: ["scene-header-top-line", "action"],
+      blank: ["action", "character", "scene-header-top-line"],
+    };
 
-    // Apply enabled rules in priority order
-    const sortedRules = this.rules
-      .filter(rule => this.enabledRules.has(rule.id))
-      .sort((a, b) => b.priority - a.priority);
+    return transitions[type] || ["action"];
+  }
 
-    for (const rule of sortedRules) {
-      if (rule.condition(context)) {
-        const action = rule.action(context);
-        actions.push(action);
+  /**
+   * إضافة قاعدة جديدة إلى قاعدة المعرفة
+   * @param pattern النمط للتطابق
+   * @param rules القواعد المرتبطة بهذا النمط
+   */
+  addRule(
+    pattern: RegExp,
+    rules: {
+      confirmType: string;
+      rejectTypes: string[];
+      minConfidence: number;
+      explanation: string;
+    }[],
+  ): void {
+    this.knowledgeBase.push({ pattern, rules });
+  }
 
-        switch (action.type) {
-          case 'replace':
-            if (action.newType) {
-              finalType = action.newType;
-              finalConfidence = action.confidence || finalConfidence;
-            }
-            break;
-          case 'flag':
-            issues.push(action.message || 'Flagged by rule: ' + rule.name);
-            break;
-          case 'suggest':
-            issues.push('Suggestion: ' + (action.message || rule.name));
-            break;
+  /**
+   * إزالة قاعدة من قاعدة المعرفة
+   * @param pattern النمط المراد إزالته
+   * @returns true إذا تمت الإزالة بنجاح
+   */
+  removeRule(pattern: RegExp): boolean {
+    const initialLength = this.knowledgeBase.length;
+    this.knowledgeBase = this.knowledgeBase.filter(
+      (kb) => kb.pattern.source !== pattern.source,
+    );
+    return this.knowledgeBase.length < initialLength;
+  }
+
+  /**
+   * الحصول على عدد القواعد في قاعدة المعرفة
+   * @returns عدد القواعد المخزنة
+   */
+  getRuleCount(): number {
+    return this.knowledgeBase.length;
+  }
+
+  /**
+   * مسح جميع القواعد (إعادة تعيين النظام)
+   */
+  reset(): void {
+    this.knowledgeBase = [];
+  }
+
+  /**
+   * فحص سطر واحد فقط
+   * @param text نص السطر
+   * @param type النوع الحالي
+   * @param confidence الثقة الحالية
+   * @param previousType النوع السابق (اختياري)
+   * @returns التصحيح المقترح أو null إذا كان صحيحاً
+   */
+  reviewSingleLine(
+    text: string,
+    type: string,
+    confidence: number,
+    previousType?: string,
+  ): SingleLineSuggestion | null {
+    // فحص القواعد المعروفة
+    for (const kb of this.knowledgeBase) {
+      if (kb.pattern.test(text)) {
+        for (const rule of kb.rules) {
+          if (rule.rejectTypes.includes(type)) {
+            return {
+              suggested: rule.confirmType,
+              confidence: Math.min(100, confidence + 15),
+              reason: rule.explanation,
+              severity: confidence < 60 ? "high" : "medium",
+            };
+          }
         }
       }
     }
 
-    return {
-      originalType: context.currentType,
-      reviewedType: finalType,
-      actions,
-      confidence: finalConfidence,
-      issues
-    };
+    // فحص الانتقالات إذا كان هناك نوع سابق
+    if (previousType) {
+      const validNext = this.getValidNextTypes(previousType);
+      if (!validNext.includes(type) && confidence < 80) {
+        return {
+          suggested: validNext[0],
+          confidence: confidence - 10,
+          reason: `الانتقال من ${previousType} إلى ${type} غير معتاد`,
+          severity: "low",
+        };
+      }
+    }
+
+    return null;
   }
 
   /**
-   * Review multiple classifications
+   * تصدير قاعدة المعرفة كـ JSON
+   * @returns JSON string لقاعدة المعرفة
    */
-  reviewBatch(contexts: ReviewContext[]): ReviewResult[] {
-    return contexts.map(context => this.review(context));
-  }
-
-  /**
-   * Add custom rule
-   */
-  addRule(rule: ReviewRule): void {
-    this.rules.push(rule);
-  }
-
-  /**
-   * Enable/disable rules
-   */
-  enableRule(ruleId: string): void {
-    this.enabledRules.add(ruleId);
-  }
-
-  disableRule(ruleId: string): void {
-    this.enabledRules.delete(ruleId);
-  }
-
-  enableAllRules(): void {
-    this.rules.forEach(rule => this.enabledRules.add(rule.id));
-  }
-
-  disableAllRules(): void {
-    this.enabledRules.clear();
-  }
-
-  /**
-   * Get rule statistics
-   */
-  getRuleStats(): { total: number; enabled: number; disabled: number } {
-    return {
-      total: this.rules.length,
-      enabled: this.enabledRules.size,
-      disabled: this.rules.length - this.enabledRules.size
-    };
-  }
-
-  private initializeDefaultRules(): void {
-    // Rule: Character lines should have colons or be short
-    this.rules.push({
-      id: 'character-format',
-      name: 'Character Format Check',
-      description: 'Character lines should have colons or be short Arabic names',
-      priority: 10,
-      condition: (ctx) => {
-        if (ctx.currentType !== 'character') return false;
-        const line = ctx.line.trim();
-        const hasColon = line.includes(':') || line.includes('：');
-        const wordCount = line.split(/\s+/).length;
-        const hasArabicLetters = /[\u0600-\u06FF]/.test(line);
-        return !hasColon && (wordCount > 3 || !hasArabicLetters);
+  exportKnowledgeBase(): string {
+    return JSON.stringify(
+      {
+        rules: this.knowledgeBase.map((kb) => ({
+          pattern: kb.pattern.source,
+          flags: kb.pattern.flags,
+          rules: kb.rules,
+        })),
+        exportedAt: new Date().toISOString(),
       },
-      action: (ctx) => ({
-        type: 'suggest',
-        message: 'Character lines should have colons or be short Arabic names'
-      })
-    });
+      null,
+      2,
+    );
+  }
 
-    // Rule: Dialogue should not start with dash outside dialogue block
-    this.rules.push({
-      id: 'dialogue-dash-check',
-      name: 'Dialogue Dash Check',
-      description: 'Dialogue starting with dash outside dialogue block might be action',
-      priority: 9,
-      condition: (ctx) => {
-        if (ctx.currentType !== 'dialogue') return false;
-        const startsWithDash = /^[\s]*[-–—]/.test(ctx.line);
-        const inDialogueBlock = ctx.previousTypes.slice(-3).some(t => 
-          ['character', 'dialogue', 'parenthetical'].includes(t)
+  /**
+   * استيراد قاعدة المعرفة من JSON
+   * @param jsonData JSON string تحتوي على القواعد
+   * @returns true إذا نجح الاستيراد
+   */
+  importKnowledgeBase(jsonData: string): boolean {
+    try {
+      const data = JSON.parse(jsonData);
+      if (data.rules && Array.isArray(data.rules)) {
+        this.knowledgeBase = data.rules.map(
+          (r: { pattern: string; flags?: string; rules?: unknown }) => ({
+            pattern: new RegExp(r.pattern, r.flags || "gi"),
+            rules: (r.rules || {}) as {
+              confirmType: string;
+              rejectTypes: string[];
+              minConfidence: number;
+              explanation: string;
+            }[],
+          }),
         );
-        return startsWithDash && !inDialogueBlock;
-      },
-      action: (ctx) => ({
-        type: 'replace',
-        newType: 'action',
-        message: 'Line starting with dash outside dialogue block should be action',
-        confidence: 0.9
-      })
-    });
-
-    // Rule: Action lines with verbs should be prioritized
-    this.rules.push({
-      id: 'action-verb-check',
-      name: 'Action Verb Check',
-      description: 'Lines with action verbs should be classified as action',
-      priority: 8,
-      condition: (ctx) => {
-        if (ctx.currentType === 'action') return false;
-        const actionVerbs = [
-          'يدخل', 'يخرج', 'يقف', 'يجلس', 'ينظر', 'يتحرك', 
-          'يقترب', 'يبتعد', 'يركض', 'يمشي', 'يتحدث', 'يصرخ',
-          'تدخل', 'تخرج', 'تقف', 'تجلس', 'تنظر', 'تتحرك'
-        ];
-        const line = ctx.line.trim();
-        const firstWord = line.split(/\s+/)[0];
-        return actionVerbs.includes(firstWord);
-      },
-      action: (ctx) => ({
-        type: 'replace',
-        newType: 'action',
-        message: 'Line starting with action verb should be action',
-        confidence: 0.85
-      })
-    });
-
-    // Rule: Parenthetical should be within dialogue block
-    this.rules.push({
-      id: 'parenthetical-context',
-      name: 'Parenthetical Context Check',
-      description: 'Parenthetical should be within dialogue block',
-      priority: 7,
-      condition: (ctx) => {
-        if (ctx.currentType !== 'parenthetical') return false;
-        const inDialogueBlock = ctx.previousTypes.slice(-3).some(t => 
-          ['character', 'dialogue', 'parenthetical'].includes(t)
-        );
-        return !inDialogueBlock;
-      },
-      action: (ctx) => ({
-        type: 'suggest',
-        message: 'Parenthetical outside dialogue block might be incorrect'
-      })
-    });
-
-    // Rule: Scene headers should be at document start or after transition
-    this.rules.push({
-      id: 'scene-header-position',
-      name: 'Scene Header Position Check',
-      description: 'Scene headers should be at start or after transitions',
-      priority: 6,
-      condition: (ctx) => {
-        if (ctx.currentType !== 'scene-header') return false;
-        if (ctx.index === 0) return false;
-        const previousType = ctx.previousTypes[ctx.previousTypes.length - 1];
-        return previousType && !['transition', 'scene-header', 'basmala'].includes(previousType);
-      },
-      action: (ctx) => ({
-        type: 'flag',
-        message: 'Scene header in unusual position'
-      })
-    });
-
-    // Rule: Transition should be at end of scene
-    this.rules.push({
-      id: 'transition-position',
-      name: 'Transition Position Check',
-      description: 'Transitions should be at end of scenes',
-      priority: 5,
-      condition: (ctx) => {
-        if (ctx.currentType !== 'transition') return false;
-        // Check if next lines are scene header or end of document
-        const nextIsSceneHeader = ctx.nextTypes[0] === 'scene-header';
-        const isEndOfDoc = ctx.nextTypes.length === 0;
-        return !(nextIsSceneHeader || isEndOfDoc);
-      },
-      action: (ctx) => ({
-        type: 'suggest',
-        message: 'Transition should be at end of scene'
-      })
-    });
-
-    // Rule: Low confidence classifications should be flagged
-    this.rules.push({
-      id: 'low-confidence',
-      name: 'Low Confidence Check',
-      description: 'Flag classifications with low confidence',
-      priority: 1,
-      condition: (ctx) => ctx.confidence < 0.7,
-      action: (ctx) => ({
-        type: 'flag',
-        message: 'Low confidence classification'
-      })
-    });
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("فشل استيراد قاعدة المعرفة:", error);
+      return false;
+    }
   }
 }

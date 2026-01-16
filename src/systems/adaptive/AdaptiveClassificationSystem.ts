@@ -1,315 +1,282 @@
 // src/systems/adaptive/AdaptiveClassificationSystem.ts
-// =====================================================
-// Adaptive Classification System
+// ===========================================================
+// Adaptive Classification System (نظام التعلم التكيفي)
+//
+// Extracted from THEditor.tsx lines 7688-7941
+// 1:1 migration - exact behavior preserved
 //
 // Responsibilities:
-// - Learn from classification patterns
-// - Adapt to user preferences
-// - Improve accuracy over time
-//
-// NO direct classification
-// NO state persistence
+// - Record user corrections and learn from them
+// - Update pattern weights based on discovered errors
+// - Improve classification scores based on previous corrections
+// - Alert on repeating error patterns
+// - Analyze common error patterns
 
-export interface AdaptivePattern {
-  id: string;
-  pattern: string;
-  type: string;
+export interface UserCorrection {
+  originalType: string;
+  correctedType: string;
+  context: {
+    previousType: string;
+    lineText: string;
+  };
+  timestamp: Date;
+  weight: number;
+}
+
+export interface ErrorPattern {
+  transition: string;
+  wrongType: string;
+  correctType: string;
   frequency: number;
-  accuracy: number;
-  lastUsed: number;
 }
 
-export interface UserPreference {
-  type: string;
-  context: string;
-  preferredType: string;
-  confidence: number;
+export interface CommonError {
+  pattern: string;
+  frequency: number;
+  suggestion: string;
 }
 
-export interface AdaptiveMetrics {
-  totalClassifications: number;
-  correctClassifications: number;
-  accuracy: number;
-  adaptationCount: number;
+export interface SystemStatistics {
+  totalCorrections: number;
+  uniquePatterns: number;
+  mostCommonError: { pattern: string; frequency: number } | null;
+  averageWeight: number;
 }
 
+export interface ExportData {
+  corrections: UserCorrection[];
+  weights: { [pattern: string]: number };
+  exportedAt: string;
+}
+
+/**
+ * @class AdaptiveClassificationSystem
+ * @description نظام التعلم التكيفي - يتعلم من تصحيحات المستخدم ويحسّن دقة التصنيف تدريجياً
+ *
+ * المميزات:
+ * ✅ تسجيل تصحيحات المستخدم وتحليل الأخطاء المتكررة
+ * ✅ تعديل أوزان الأنماط بناءً على الأخطاء المكتشفة
+ * ✅ تحسين درجات التصنيف بناءً على التعليقات السابقة
+ * ✅ تنبيهات عند الأخطاء المتكررة
+ * ✅ تحليل الأنماط الخاطئة الشائعة
+ */
 export class AdaptiveClassificationSystem {
-  private patterns: Map<string, AdaptivePattern> = new Map();
-  private preferences: UserPreference[] = [];
-  private metrics: AdaptiveMetrics;
-  private adaptationThreshold: number;
-  private maxPatterns: number;
-
-  constructor(options?: {
-    adaptationThreshold?: number;
-    maxPatterns?: number;
-  }) {
-    this.adaptationThreshold = options?.adaptationThreshold || 0.8;
-    this.maxPatterns = options?.maxPatterns || 1000;
-    this.metrics = {
-      totalClassifications: 0,
-      correctClassifications: 0,
-      accuracy: 0,
-      adaptationCount: 0
-    };
-  }
+  private userCorrections: UserCorrection[] = [];
+  private patternWeights: { [pattern: string]: number } = {};
 
   /**
-   * Learn from a classification result
+   * تسجيل تصحيحات المستخدم والتعلم منها
+   * @param lineText نص السطر المصحح
+   * @param originalClassification التصنيف الأصلي قبل التصحيح
+   * @param userCorrectedClassification التصنيف الصحيح من قبل المستخدم
+   * @param previousType نوع السطر السابق (للسياق)
    */
-  learn(
-    input: string,
-    predictedType: string,
-    actualType: string,
-    context?: string
+  recordUserCorrection(
+    lineText: string,
+    originalClassification: string,
+    userCorrectedClassification: string,
+    previousType: string,
   ): void {
-    this.metrics.totalClassifications++;
-    
-    if (predictedType === actualType) {
-      this.metrics.correctClassifications++;
-    }
+    const correction: UserCorrection = {
+      originalType: originalClassification,
+      correctedType: userCorrectedClassification,
+      context: {
+        previousType,
+        lineText,
+      },
+      timestamp: new Date(),
+      weight: 1.0, // سيزداد إذا تكررت نفس الخطأ
+    };
 
-    this.metrics.accuracy = this.metrics.correctClassifications / this.metrics.totalClassifications;
+    this.userCorrections.push(correction);
 
-    // Update patterns
-    this.updatePatterns(input, actualType, predictedType === actualType);
+    // تحديث الأوزان
+    this.updateWeights();
 
-    // Update preferences
-    if (context) {
-      this.updatePreferences(context, predictedType, actualType);
-    }
-
-    // Trigger adaptation if needed
-    if (this.shouldAdapt()) {
-      this.adapt();
-    }
+    // إذا تكررت نفس الخطأ، زد الوزن
+    this.checkForRepeatingPatterns();
   }
 
   /**
-   * Get adaptive suggestion for classification
+   * تحديث أوزان النمط بناءً على الأخطاء
+   * تقليل وزن الأخطاء المتكررة وزيادة وزن التصنيفات الصحيحة
    */
-  getSuggestion(input: string, context?: string): string | null {
-    // Check for exact pattern matches
-    for (const pattern of this.patterns.values()) {
-      if (this.matchesPattern(input, pattern.pattern) && 
-          pattern.accuracy >= this.adaptationThreshold) {
-        return pattern.type;
+  private updateWeights(): void {
+    // تحليل الأخطاء المتكررة
+    const errorPatterns = this.identifyErrorPatterns();
+
+    // حساب الأوزان الجديدة
+    errorPatterns.forEach((pattern) => {
+      const patternKey = `${pattern.transition} -> ${pattern.wrongType}`;
+      const correctKey = `${pattern.transition} -> ${pattern.correctType}`;
+
+      // تقليل وزن الخطأ بمعدل 30%
+      this.patternWeights[patternKey] = (this.patternWeights[patternKey] || 1) * 0.7;
+
+      // زيادة وزن الصحيح بمعدل 30%
+      this.patternWeights[correctKey] = (this.patternWeights[correctKey] || 1) * 1.3;
+    });
+  }
+
+  /**
+   * تحديد الأنماط المتكررة من التصحيحات
+   * @returns قائمة الأنماط المتكررة مع تكرارها
+   */
+  private identifyErrorPatterns(): ErrorPattern[] {
+    const patterns: Record<
+      string,
+      { transition: string; wrongType: string; correctType: string; frequency: number; weight?: number }
+    > = {};
+
+    this.userCorrections.forEach((correction) => {
+      const key = `${correction.context.previousType}|${correction.originalType}`;
+
+      if (!patterns[key]) {
+        patterns[key] = {
+          transition: correction.context.previousType,
+          wrongType: correction.originalType,
+          correctType: correction.correctedType,
+          frequency: 0,
+        };
       }
-    }
 
-    // Check contextual preferences
-    if (context) {
-      const pref = this.preferences.find(p => 
-        p.context === context && 
-        p.confidence >= this.adaptationThreshold
-      );
-      if (pref) {
-        return pref.preferredType;
+      patterns[key].frequency++;
+      patterns[key].weight = correction.weight;
+    });
+
+    // إرجاع الأنماط المتكررة (أكثر من مرة واحدة)
+    return Object.values(patterns).filter((p) => p.frequency > 1);
+  }
+
+  /**
+   * فحص الأخطاء المتكررة وإصدار تنبيهات عند الحاجة
+   * يرسل تنبيهاً عند تكرار الخطأ أكثر من 3 مرات
+   */
+  private checkForRepeatingPatterns(): void {
+    const errorPatterns = this.identifyErrorPatterns();
+
+    errorPatterns.forEach((pattern) => {
+      if (pattern.frequency > 3) {
+        // إذا تكرر الخطأ أكثر من 3 مرات
+        // أرسل تنبيهاً للمطور للتحقق من النموذج
+        console.warn(
+          `⚠️ خطأ متكرر في نظام التصنيف:\n` +
+            `التحول: ${pattern.transition} ➜ ${pattern.wrongType}\n` +
+            `التكرار: ${pattern.frequency} مرات\n` +
+            `الصحيح: ${pattern.correctType}`,
+        );
       }
-    }
-
-    return null;
+    });
   }
 
   /**
-   * Get adaptive metrics
+   * تحسين درجات التصنيف بناءً على التعليقات السابقة
+   * @param type نوع التصنيف الحالي
+   * @param context السياق (النوع السابق والنص)
+   * @param baseScore الدرجة الأساسية
+   * @returns الدرجة المحسّنة بناءً على الأوزان
    */
-  getMetrics(): AdaptiveMetrics {
-    return { ...this.metrics };
+  improveClassificationScore(
+    type: string,
+    context: { previousType: string; lineText: string },
+    baseScore: number,
+  ): number {
+    const patternKey = `${context.previousType} -> ${type}`;
+    const weight = this.patternWeights[patternKey] || 1.0;
+
+    // تطبيق الوزن على الدرجة الأساسية
+    return baseScore * weight;
   }
 
   /**
-   * Get learned patterns
+   * الحصول على الأنماط الخاطئة الأكثر تكراراً
+   * مفيد للتحليل والإبلاغ عن المشاكل
+   * @returns قائمة الأخطاء الشائعة مع اقتراحات الإصلاح
    */
-  getPatterns(): AdaptivePattern[] {
-    return Array.from(this.patterns.values());
+  getCommonErrors(): CommonError[] {
+    return this.identifyErrorPatterns()
+      .sort((a, b) => b.frequency - a.frequency)
+      .map((pattern) => ({
+        pattern: `${pattern.transition} ➜ ${pattern.wrongType}`,
+        frequency: pattern.frequency,
+        suggestion: `يجب أن يكون: ${pattern.correctType}`,
+      }));
   }
 
   /**
-   * Reset learning
+   * مسح جميع التصحيحات والأوزان (إعادة تعيين النظام)
    */
   reset(): void {
-    this.patterns.clear();
-    this.preferences = [];
-    this.metrics = {
-      totalClassifications: 0,
-      correctClassifications: 0,
-      accuracy: 0,
-      adaptationCount: 0
-    };
+    this.userCorrections = [];
+    this.patternWeights = {};
   }
 
-  private updatePatterns(input: string, type: string, wasCorrect: boolean): void {
-    // Generate pattern key from input
-    const patternKey = this.generatePatternKey(input);
-    
-    let pattern = this.patterns.get(patternKey);
-    
-    if (!pattern) {
-      // Create new pattern
-      pattern = {
-        id: this.generateId(),
-        pattern: patternKey,
-        type,
-        frequency: 1,
-        accuracy: wasCorrect ? 1 : 0,
-        lastUsed: Date.now()
-      };
-      
-      // Check if we have too many patterns
-      if (this.patterns.size >= this.maxPatterns) {
-        this.evictOldestPattern();
-      }
-      
-      this.patterns.set(patternKey, pattern);
-    } else {
-      // Update existing pattern
-      pattern.frequency++;
-      pattern.accuracy = (pattern.accuracy * (pattern.frequency - 1) + (wasCorrect ? 1 : 0)) / pattern.frequency;
-      pattern.lastUsed = Date.now();
-      
-      // Update type if accuracy improves with new type
-      if (wasCorrect && pattern.type !== type) {
-        pattern.type = type;
-      }
-    }
+  /**
+   * الحصول على عدد التصحيحات المسجلة
+   * @returns عدد التصحيحات
+   */
+  getCorrectionCount(): number {
+    return this.userCorrections.length;
   }
 
-  private updatePreferences(context: string, predictedType: string, actualType: string): void {
-    const existingPref = this.preferences.find(p => 
-      p.type === predictedType && 
-      p.context === context
-    );
+  /**
+   * الحصول على إحصائيات النظام
+   * @returns إحصائيات الأداء والأخطاء
+   */
+  getStatistics(): SystemStatistics {
+    const commonErrors = this.getCommonErrors();
+    const weights = Object.values(this.patternWeights);
 
-    if (existingPref) {
-      // Update existing preference
-      const wasCorrect = predictedType === actualType;
-      const newConfidence = (existingPref.confidence + (wasCorrect ? 0.1 : -0.1)) / 2;
-      existingPref.confidence = Math.max(0, Math.min(1, newConfidence));
-      
-      if (wasCorrect) {
-        existingPref.preferredType = actualType;
-      }
-    } else {
-      // Create new preference
-      this.preferences.push({
-        type: predictedType,
-        context,
-        preferredType: actualType,
-        confidence: predictedType === actualType ? 0.8 : 0.2
-      });
-    }
-
-    // Clean up low confidence preferences
-    this.preferences = this.preferences.filter(p => p.confidence > 0.1);
-  }
-
-  private shouldAdapt(): boolean {
-    return this.metrics.totalClassifications > 0 && 
-           this.metrics.totalClassifications % 100 === 0;
-  }
-
-  private adapt(): void {
-    // Remove low accuracy patterns
-    for (const [key, pattern] of Array.from(this.patterns.entries())) {
-      if (pattern.accuracy < 0.5 && pattern.frequency > 10) {
-        this.patterns.delete(key);
-      }
-    }
-
-    // Merge similar patterns
-    this.mergeSimilarPatterns();
-
-    this.metrics.adaptationCount++;
-  }
-
-  private mergeSimilarPatterns(): void {
-    const patterns = Array.from(this.patterns.values());
-    const toMerge = new Map<string, AdaptivePattern[]>();
-
-    // Group similar patterns
-    patterns.forEach(pattern => {
-      const group = this.findSimilarPatternGroup(pattern, toMerge);
-      if (group) {
-        group.push(pattern);
-      } else {
-        toMerge.set(pattern.id, [pattern]);
-      }
-    });
-
-    // Merge groups
-    Array.from(toMerge.values()).forEach(group => {
-      if (group.length > 1) {
-        const merged = this.mergePatternGroup(group);
-        group.forEach(p => this.patterns.delete(p.id));
-        this.patterns.set(merged.id, merged);
-      }
-    });
-  }
-
-  private findSimilarPatternGroup(
-    pattern: AdaptivePattern, 
-    groups: Map<string, AdaptivePattern[]>
-  ): AdaptivePattern[] | null {
-    for (const [key, group] of Array.from(groups.entries())) {
-      if (this.arePatternsSimilar(pattern, group[0])) {
-        return group;
-      }
-    }
-    return null;
-  }
-
-  private arePatternsSimilar(p1: AdaptivePattern, p2: AdaptivePattern): boolean {
-    // Simple similarity check - can be enhanced
-    return p1.type === p2.type && 
-           Math.abs(p1.accuracy - p2.accuracy) < 0.2;
-  }
-
-  private mergePatternGroup(group: AdaptivePattern[]): AdaptivePattern {
-    const totalFreq = group.reduce((sum, p) => sum + p.frequency, 0);
-    const avgAccuracy = group.reduce((sum, p) => sum + p.accuracy * p.frequency, 0) / totalFreq;
-    
     return {
-      id: this.generateId(),
-      pattern: group[0].pattern, // Keep first pattern
-      type: group[0].type,
-      frequency: totalFreq,
-      accuracy: avgAccuracy,
-      lastUsed: Math.max(...group.map(p => p.lastUsed))
+      totalCorrections: this.userCorrections.length,
+      uniquePatterns: Object.keys(this.patternWeights).length,
+      mostCommonError:
+        commonErrors.length > 0
+          ? {
+              pattern: commonErrors[0].pattern,
+              frequency: commonErrors[0].frequency,
+            }
+          : null,
+      averageWeight: weights.length > 0 ? weights.reduce((a, b) => a + b, 0) / weights.length : 1.0,
     };
   }
 
-  private evictOldestPattern(): void {
-    let oldest: AdaptivePattern | null = null;
-    let oldestTime = Date.now();
+  /**
+   * تصدير التصحيحات كـ JSON (للنسخ الاحتياطي)
+   * @returns JSON string للتصحيحات والأوزان
+   */
+  exportData(): string {
+    const data: ExportData = {
+      corrections: this.userCorrections,
+      weights: this.patternWeights,
+      exportedAt: new Date().toISOString(),
+    };
+    return JSON.stringify(data, null, 2);
+  }
 
-    for (const pattern of this.patterns.values()) {
-      if (pattern.lastUsed < oldestTime) {
-        oldest = pattern;
-        oldestTime = pattern.lastUsed;
+  /**
+   * استيراد التصحيحات من JSON (استعادة النسخة الاحتياطية)
+   * @param jsonData JSON string تحتوي على التصحيحات والأوزان
+   * @returns true إذا نجح الاستيراد
+   */
+  importData(jsonData: string): boolean {
+    try {
+      const data = JSON.parse(jsonData);
+      if (data.corrections && Array.isArray(data.corrections)) {
+        this.userCorrections = data.corrections.map(
+          (c: { from: string; to: string; context: string; timestamp?: string }) => ({
+            ...c,
+            timestamp: new Date(c.timestamp || new Date()),
+          }),
+        );
       }
+      if (data.weights && typeof data.weights === "object") {
+        this.patternWeights = data.weights;
+      }
+      return true;
+    } catch (error) {
+      console.error("فشل استيراد البيانات:", error);
+      return false;
     }
-
-    if (oldest) {
-      this.patterns.delete(oldest.id);
-    }
-  }
-
-  private generatePatternKey(input: string): string {
-    // Normalize input to create pattern key
-    return input
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .replace(/[^\w\s]/g, '')
-      .trim();
-  }
-
-  private matchesPattern(input: string, pattern: string): boolean {
-    const inputKey = this.generatePatternKey(input);
-    return inputKey === pattern || inputKey.includes(pattern);
-  }
-
-  private generateId(): string {
-    return `adapt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
