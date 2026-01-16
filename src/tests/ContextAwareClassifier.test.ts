@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ContextAwareClassifier, ContextClassificationResult, setClassifierAdapter } from '../systems/context/ContextAwareClassifier';
+import { ContextAwareClassifier, ContextClassificationResult } from '../systems/context/ContextAwareClassifier';
+import { classifyWithScoring } from '../systems/scoring/ScoringSystem';
+import { isBlank } from '../utils/text';
 import { LogLevel } from '../systems/context/StructuredLogger';
 import { BatchClassificationResult } from '../types';
 
 global.fetch = vi.fn();
 
+// Mock the scoring system
+vi.mock('../systems/scoring/ScoringSystem', () => ({
+    classifyWithScoring: vi.fn(),
+    isBlank: vi.fn(),
+}));
+
 describe('ContextAwareClassifier', () => {
     let classifier: ContextAwareClassifier;
-    let mockAdapter: any;
 
     beforeEach(() => {
         classifier = new ContextAwareClassifier();
@@ -15,12 +22,6 @@ describe('ContextAwareClassifier', () => {
         classifier.clearCache();
         classifier.resetMetrics();
         vi.clearAllMocks();
-
-        mockAdapter = {
-            classifyWithScoring: vi.fn(),
-            isBlank: vi.fn().mockImplementation((line) => !line || line.trim() === '')
-        };
-        setClassifierAdapter(mockAdapter);
     });
 
     it('should classify with full context using API', async () => {
@@ -148,12 +149,72 @@ describe('ContextAwareClassifier', () => {
         expect(classifier.getMemorySize()).toBe(2);
     });
 
-    it('should classify batch detailed using adapter', () => {
+    it('should classify batch detailed using classifyWithScoring', () => {
         const text = "SCENE 1\nJOHN\nHello";
-        mockAdapter.classifyWithScoring.mockImplementation((line) => {
-             if (line.includes("SCENE")) return { type: 'scene-header-top-line', confidence: 'high' };
-             if (line.includes("JOHN")) return { type: 'character', confidence: 'high' };
-             return { type: 'dialogue', confidence: 'high' };
+
+        // Mock isBlank to return false for all lines
+        vi.mocked(isBlank).mockReturnValue(false);
+
+        // Mock classifyWithScoring
+        vi.mocked(classifyWithScoring).mockImplementation((line) => {
+            if (line.includes("SCENE")) {
+                return {
+                    type: 'scene-header-top-line',
+                    confidence: 'high' as const,
+                    scores: {},
+                    context: {
+                        prevLine: null,
+                        nextLine: null,
+                        prevNonBlank: null,
+                        nextNonBlank: null,
+                        position: 'middle',
+                        previousLines: [],
+                        nextLines: [],
+                        stats: { currentLineLength: 7, currentWordCount: 2, hasPunctuation: false }
+                    },
+                    doubtScore: 0,
+                    needsReview: false,
+                    top2Candidates: null
+                };
+            }
+            if (line.includes("JOHN")) {
+                return {
+                    type: 'character',
+                    confidence: 'high' as const,
+                    scores: {},
+                    context: {
+                        prevLine: null,
+                        nextLine: null,
+                        prevNonBlank: null,
+                        nextNonBlank: null,
+                        position: 'middle',
+                        previousLines: [],
+                        nextLines: [],
+                        stats: { currentLineLength: 5, currentWordCount: 1, hasPunctuation: false }
+                    },
+                    doubtScore: 0,
+                    needsReview: false,
+                    top2Candidates: null
+                };
+            }
+            return {
+                type: 'dialogue',
+                confidence: 'high' as const,
+                scores: {},
+                context: {
+                    prevLine: null,
+                    nextLine: null,
+                    prevNonBlank: null,
+                    nextNonBlank: null,
+                    position: 'middle',
+                    previousLines: [],
+                    nextLines: [],
+                    stats: { currentLineLength: 5, currentWordCount: 1, hasPunctuation: false }
+                },
+                doubtScore: 0,
+                needsReview: false,
+                top2Candidates: null
+            };
         });
 
         const results = ContextAwareClassifier.classifyBatchDetailed(text, true);
@@ -162,6 +223,6 @@ describe('ContextAwareClassifier', () => {
         expect(results[0].type).toBe('scene-header-top-line');
         expect(results[1].type).toBe('character');
         expect(results[2].type).toBe('dialogue');
-        expect(mockAdapter.classifyWithScoring).toHaveBeenCalledTimes(3);
+        expect(classifyWithScoring).toHaveBeenCalledTimes(3);
     });
 });

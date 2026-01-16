@@ -1,33 +1,10 @@
 import { StructuredLogger, LogLevel } from "./StructuredLogger";
 import { DocumentMemory } from "../memory/DocumentMemory";
-import { BatchClassificationResult, ReviewableLineUI } from "../../types";
-
-// Interface for the adapter to access ScreenplayClassifier logic
-export interface ScreenplayClassifierAdapter {
-    classifyWithScoring(
-        line: string,
-        index: number,
-        allLines: string[],
-        previousTypes?: (string | null)[],
-        documentMemory?: DocumentMemory,
-        adaptiveSystem?: any // Using any to avoid importing AdaptiveClassificationSystem if it's not available
-    ): any; // Should be ClassificationResult
-    isBlank(line: string): boolean;
-}
-
-// Singleton adapter
-let classifierAdapter: ScreenplayClassifierAdapter | null = null;
-
-export function setClassifierAdapter(adapter: ScreenplayClassifierAdapter) {
-    classifierAdapter = adapter;
-}
-
-export function getClassifierAdapter(): ScreenplayClassifierAdapter {
-    if (!classifierAdapter) {
-        throw new Error("ScreenplayClassifierAdapter not set. Call setClassifierAdapter first.");
-    }
-    return classifierAdapter;
-}
+import { BatchClassificationResult, ReviewableLineUI, ClassificationResult } from "../../types";
+import {
+  classifyWithScoring,
+  isBlank
+} from "../../systems/scoring/ScoringSystem";
 
 /**
  * @interface ContextMemoryEntry
@@ -234,7 +211,6 @@ export class ContextAwareClassifier {
     text: string,
     useContext: boolean = true,
   ): BatchClassificationResult[] {
-    const adapter = getClassifierAdapter();
     const lines = text.split(/\r?\n/);
     const results: BatchClassificationResult[] = [];
     const previousTypes: (string | null)[] = [];
@@ -243,7 +219,7 @@ export class ContextAwareClassifier {
       const rawLine = lines[i] || "";
 
       // التعامل مع السطور الفارغة
-      if (adapter.isBlank(rawLine)) {
+      if (isBlank(rawLine)) {
         results.push({
           text: rawLine,
           type: "blank",
@@ -256,8 +232,8 @@ export class ContextAwareClassifier {
       }
 
       if (useContext) {
-        // We use the adapter's scoring logic as requested
-        const result = adapter.classifyWithScoring(rawLine, i, lines, previousTypes);
+        // Use classifyWithScoring directly from ScoringSystem
+        const result = classifyWithScoring(rawLine, i, lines, previousTypes);
 
         results.push({
           text: rawLine,

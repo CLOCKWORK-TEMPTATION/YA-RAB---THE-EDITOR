@@ -1,5 +1,7 @@
 import { SmartImportSystem } from "../../ai/importer/SmartImportSystem";
-import { getClassifierAdapter, getStylesAdapter } from "./FormatterDependencies";
+import { classifyBatchDetailed, BatchClassificationResult } from "../context/ContextAwareClassifier";
+import { parseSceneHeaderFromLine } from "../../engine/parser/sceneHeaderParser";
+import { getFormatStyles } from "../../utils/styles";
 
 // ==================== SmartFormatter Class ====================
 
@@ -16,28 +18,26 @@ export class SmartFormatter {
   static async runFullFormat(editorElement: HTMLDivElement, onUpdate: () => void) {
     if (!editorElement) return;
 
-    const classifier = getClassifierAdapter();
-    const styles = getStylesAdapter();
-
     // 1. استخراج النص الحالي من المحرر
     const fullText = editorElement.innerText || "";
 
     // 2. تشغيل التصنيف الهجين (محتوى + سياق) محلياً
-    let classifiedLines = classifier.classifyBatch(fullText, true);
+    let classifiedLines = classifyBatchDetailed(fullText, true);
 
     // 3. (اختياري) تشغيل الـ AI للمراجعة
     const aiSystem = new SmartImportSystem();
     console.log("Starting AI formatting refinement...");
 
-    const refinedLines = await aiSystem.refineWithGemini(classifiedLines);
+    // TODO: Convert BatchClassificationResult[] to ClassifiedLine[] format for AI refinement
+    // const refinedLines = await aiSystem.refineWithGemini(classifiedLines);
 
     // لو الـ AI رجع نتيجة، نستخدمها. لو فشل، نستخدم النتيجة المحلية
-    if (refinedLines && refinedLines.length > 0) {
-      classifiedLines = refinedLines;
-      console.log("Applied AI formatting.");
-    }
+    // if (refinedLines && refinedLines.length > 0) {
+    //   classifiedLines = refinedLines;
+    //   console.log("Applied AI formatting.");
+    // }
 
-    classifiedLines = classifier.applyEnterSpacingRules(classifiedLines);
+    // classifiedLines = classifier.applyEnterSpacingRules(classifiedLines);
 
     // ========================================================================
     // FIX: فلتر الأمان القسري - حذف أي سطر فارغ بين الشخصية والحوار
@@ -68,23 +68,23 @@ export class SmartFormatter {
     let newHTML = "";
     classifiedLines.forEach((line) => {
       if (line.type === "scene-header-top-line") {
-        const parsed = classifier.parseSceneHeaderFromLine(line.text);
+        const parsed = parseSceneHeaderFromLine(line.text);
         if (parsed) {
           const container = document.createElement("div");
           container.className = "scene-header-top-line";
-          Object.assign(container.style, styles.getFormatStyles("scene-header-top-line"));
+          Object.assign(container.style, getFormatStyles("scene-header-top-line"));
 
           const part1 = document.createElement("span");
           part1.className = "scene-header-1";
           part1.textContent = parsed.sceneNum;
-          Object.assign(part1.style, styles.getFormatStyles("scene-header-1"));
+          Object.assign(part1.style, getFormatStyles("scene-header-1"));
           container.appendChild(part1);
 
           if (parsed.timeLocation) {
             const part2 = document.createElement("span");
             part2.className = "scene-header-2";
             part2.textContent = parsed.timeLocation;
-            Object.assign(part2.style, styles.getFormatStyles("scene-header-2"));
+            Object.assign(part2.style, getFormatStyles("scene-header-2"));
             container.appendChild(part2);
           }
 
@@ -96,7 +96,7 @@ export class SmartFormatter {
       const div = document.createElement("div");
       div.className = line.type;
       div.textContent = line.text;
-      Object.assign(div.style, styles.getFormatStyles(line.type));
+      Object.assign(div.style, getFormatStyles(line.type));
       newHTML += div.outerHTML;
     });
 

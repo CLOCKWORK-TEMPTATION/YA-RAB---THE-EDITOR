@@ -1,16 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SmartFormatter } from '../systems/formatter/SmartFormatter';
-import * as FormatterDependencies from '../systems/formatter/FormatterDependencies';
 import { SmartImportSystem } from '../ai/importer/SmartImportSystem';
+import * as ContextAwareClassifier from '../systems/context/ContextAwareClassifier';
+import * as sceneHeaderParser from '../engine/parser/sceneHeaderParser';
+import * as styles from '../utils/styles';
 
 // Mock dependencies
 vi.mock('../ai/importer/SmartImportSystem');
+vi.mock('../systems/context/ContextAwareClassifier');
+vi.mock('../engine/parser/sceneHeaderParser');
+vi.mock('../utils/styles');
 
 describe('SmartFormatter', () => {
     let editorElement: HTMLDivElement;
     let onUpdate: () => void;
-    let classifierAdapter: any;
-    let stylesAdapter: any;
 
     beforeEach(() => {
         // Setup DOM
@@ -18,23 +21,18 @@ describe('SmartFormatter', () => {
         editorElement.innerText = "SCENE 1\nJOHN\nHello";
         onUpdate = vi.fn();
 
-        // Setup Adapters
-        classifierAdapter = {
-            classifyBatch: vi.fn().mockReturnValue([
-                { text: "SCENE 1", type: "scene-header-top-line" },
-                { text: "JOHN", type: "character" },
-                { text: "Hello", type: "dialogue" }
-            ]),
-            applyEnterSpacingRules: vi.fn().mockImplementation((lines) => lines),
-            parseSceneHeaderFromLine: vi.fn().mockReturnValue({ sceneNum: "1", timeLocation: "INT. HOUSE" })
-        };
+        // Mock classifyBatchDetailed
+        vi.spyOn(ContextAwareClassifier, 'classifyBatchDetailed').mockReturnValue([
+            { text: "SCENE 1", type: "scene-header-top-line", confidence: "high" as const, doubtScore: 0, needsReview: false },
+            { text: "JOHN", type: "character", confidence: "high" as const, doubtScore: 0, needsReview: false },
+            { text: "Hello", type: "dialogue", confidence: "high" as const, doubtScore: 0, needsReview: false }
+        ] as any);
 
-        stylesAdapter = {
-            getFormatStyles: vi.fn().mockReturnValue({ color: 'black' })
-        };
+        // Mock parseSceneHeaderFromLine
+        vi.spyOn(sceneHeaderParser, 'parseSceneHeaderFromLine').mockReturnValue({ sceneNum: "1", timeLocation: "INT. HOUSE" });
 
-        FormatterDependencies.setClassifierAdapter(classifierAdapter);
-        FormatterDependencies.setStylesAdapter(stylesAdapter);
+        // Mock getFormatStyles
+        vi.spyOn(styles, 'getFormatStyles').mockReturnValue({ color: 'black' } as any);
 
         // Mock AI System
         (SmartImportSystem as any).mockImplementation(() => ({
@@ -49,7 +47,7 @@ describe('SmartFormatter', () => {
     it('should format editor content correctly', async () => {
         await SmartFormatter.runFullFormat(editorElement, onUpdate);
 
-        expect(classifierAdapter.classifyBatch).toHaveBeenCalledWith("SCENE 1\nJOHN\nHello", true);
+        expect(ContextAwareClassifier.classifyBatchDetailed).toHaveBeenCalledWith("SCENE 1\nJOHN\nHello", true);
         expect(onUpdate).toHaveBeenCalled();
         expect(editorElement.innerHTML).toContain('class="scene-header-top-line"');
         expect(editorElement.innerHTML).toContain('class="character"');
@@ -59,9 +57,9 @@ describe('SmartFormatter', () => {
     it('should use AI refinement if available', async () => {
         (SmartImportSystem as any).mockImplementation(() => ({
             refineWithGemini: vi.fn().mockResolvedValue([
-                { text: "SCENE 1", type: "scene-header-top-line" },
-                { text: "JOHN", type: "character" },
-                { text: "Hello", type: "dialogue" }
+                { text: "SCENE 1", type: "scene-header-top-line", confidence: "high" as const, doubtScore: 0, needsReview: false },
+                { text: "JOHN", type: "character", confidence: "high" as const, doubtScore: 0, needsReview: false },
+                { text: "Hello", type: "dialogue", confidence: "high" as const, doubtScore: 0, needsReview: false }
             ])
         }));
 
@@ -72,18 +70,15 @@ describe('SmartFormatter', () => {
     });
 
     it('should filter blank lines between character and dialogue', async () => {
-        classifierAdapter.classifyBatch.mockReturnValue([
-            { text: "JOHN", type: "character" },
-            { text: "", type: "action" }, // Blank action acting as spacer
-            { text: "Hello", type: "dialogue" }
-        ]);
+        vi.spyOn(ContextAwareClassifier, 'classifyBatchDetailed').mockReturnValue([
+            { text: "JOHN", type: "character", confidence: "high" as const, doubtScore: 0, needsReview: false },
+            { text: "", type: "action", confidence: "high" as const, doubtScore: 0, needsReview: false }, // Blank action acting as spacer
+            { text: "Hello", type: "dialogue", confidence: "high" as const, doubtScore: 0, needsReview: false }
+        ] as any);
 
         await SmartFormatter.runFullFormat(editorElement, onUpdate);
 
         // The blank line should be removed
-        // Verify by checking calls to stylesAdapter or final HTML structure
-        // Since we mock styles, we can check how many times it was called or the length of classifiedLines passed to forEach loop inside runFullFormat
-        // Ideally we check the output HTML
         const divs = editorElement.querySelectorAll('div');
         // Expect Character and Dialogue (2 divs), blank removed.
         expect(divs.length).toBe(2);
