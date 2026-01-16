@@ -1,280 +1,109 @@
-// src/systems/formatter/SmartFormatter.ts
-// ========================================
-// Smart Formatter
-//
-// Responsibilities:
-// - Format screenplay text
-// - Apply spacing rules
-// - Maintain consistency
-//
-// NO classification logic
-// NO parsing logic
+import { SmartImportSystem } from "../../ai/importer/SmartImportSystem";
+import { getClassifierAdapter, getStylesAdapter } from "./FormatterDependencies";
 
-export interface FormattingRule {
-  name: string;
-  description: string;
-  apply: (line: string, type: string, context: FormattingContext) => string;
-  priority: number;
-}
+// ==================== SmartFormatter Class ====================
 
-export interface FormattingContext {
-  previousLine?: string;
-  previousType?: string;
-  nextLine?: string;
-  nextType?: string;
-  isInDialogueBlock: boolean;
-  lineNumber: number;
-}
-
-export interface FormattingResult {
-  original: string;
-  formatted: string;
-  changes: string[];
-  appliedRules: string[];
-}
-
+/**
+ * @class SmartFormatter
+ * @description محرك التنسيق الذكي المستقل - ينفذ المنطق الهجين (Hybrid Logic + AI) بمعزل تام عن عملية اللصق
+ */
 export class SmartFormatter {
-  private rules: FormattingRule[] = [];
-  private enabledRules: Set<string> = new Set();
-
-  constructor() {
-    this.initializeDefaultRules();
-    this.enableAllRules();
-  }
-
   /**
-   * Format a single line
+   * دالة مستقلة تماماً تقوم بقراءة المحرر وإعادة تنسيقه بذكاء
+   * @param editorElement عنصر الـ DOM الخاص بالمحرر
+   * @param onUpdate دالة callback لتحديث الـ State بعد الانتهاء
    */
-  formatLine(
-    line: string,
-    type: string,
-    context: FormattingContext
-  ): FormattingResult {
-    const changes: string[] = [];
-    const appliedRules: string[] = [];
-    let formatted = line;
+  static async runFullFormat(editorElement: HTMLDivElement, onUpdate: () => void) {
+    if (!editorElement) return;
 
-    // Apply enabled rules in priority order
-    const sortedRules = this.rules
-      .filter(rule => this.enabledRules.has(rule.name))
-      .sort((a, b) => b.priority - a.priority);
+    const classifier = getClassifierAdapter();
+    const styles = getStylesAdapter();
 
-    for (const rule of sortedRules) {
-      const previous = formatted;
-      formatted = rule.apply(formatted, type, context);
-      
-      if (previous !== formatted) {
-        changes.push(`Applied ${rule.name}`);
-        appliedRules.push(rule.name);
-      }
+    // 1. استخراج النص الحالي من المحرر
+    const fullText = editorElement.innerText || "";
+
+    // 2. تشغيل التصنيف الهجين (محتوى + سياق) محلياً
+    let classifiedLines = classifier.classifyBatch(fullText, true);
+
+    // 3. (اختياري) تشغيل الـ AI للمراجعة
+    const aiSystem = new SmartImportSystem();
+    console.log("Starting AI formatting refinement...");
+
+    const refinedLines = await aiSystem.refineWithGemini(classifiedLines);
+
+    // لو الـ AI رجع نتيجة، نستخدمها. لو فشل، نستخدم النتيجة المحلية
+    if (refinedLines && refinedLines.length > 0) {
+      classifiedLines = refinedLines;
+      console.log("Applied AI formatting.");
     }
 
-    return {
-      original: line,
-      formatted,
-      changes,
-      appliedRules
-    };
-  }
+    classifiedLines = classifier.applyEnterSpacingRules(classifiedLines);
 
-  /**
-   * Format multiple lines
-   */
-  formatLines(
-    lines: string[],
-    types: string[]
-  ): { formatted: string[]; results: FormattingResult[] } {
-    const results: FormattingResult[] = [];
-    const formatted: string[] = [];
+    // ========================================================================
+    // FIX: فلتر الأمان القسري - حذف أي سطر فارغ بين الشخصية والحوار
+    // ========================================================================
+    classifiedLines = classifiedLines.filter((line, index, arr) => {
+      // لا تحذف أول أو آخر سطر
+      if (index === 0 || index === arr.length - 1) return true;
 
-    for (let i = 0; i < lines.length; i++) {
-      const context: FormattingContext = {
-        previousLine: lines[i - 1],
-        previousType: types[i - 1],
-        nextLine: lines[i + 1],
-        nextType: types[i + 1],
-        isInDialogueBlock: this.isInDialogueBlock(types, i),
-        lineNumber: i
-      };
+      const prev = arr[index - 1];
+      const next = arr[index + 1];
 
-      const result = this.formatLine(lines[i], types[i], context);
-      results.push(result);
-      formatted.push(result.formatted);
-    }
+      // هل هذا السطر "فراغ"؟ (Action أو Dialogue فارغ)
+      const isBlank = !line.text.trim();
 
-    return { formatted, results };
-  }
+      // هل قبله شخصية وبعده حوار؟
+      const isCharacterPrev = prev.type.toLowerCase() === "character";
+      const isDialogueNext = next.type.toLowerCase() === "dialogue";
 
-  /**
-   * Add custom formatting rule
-   */
-  addRule(rule: FormattingRule): void {
-    this.rules.push(rule);
-  }
+      // إذا تحققت الشروط الثلاثة، احذف السطر فوراً
+      if (isBlank && isCharacterPrev && isDialogueNext) {
+        return false;
+      }
+      return true;
+    });
+    // ========================================================================
 
-  /**
-   * Enable/disable rules
-   */
-  enableRule(ruleName: string): void {
-    this.enabledRules.add(ruleName);
-  }
+    // 4. إعادة بناء الـ HTML للمحرر
+    let newHTML = "";
+    classifiedLines.forEach((line) => {
+      if (line.type === "scene-header-top-line") {
+        const parsed = classifier.parseSceneHeaderFromLine(line.text);
+        if (parsed) {
+          const container = document.createElement("div");
+          container.className = "scene-header-top-line";
+          Object.assign(container.style, styles.getFormatStyles("scene-header-top-line"));
 
-  disableRule(ruleName: string): void {
-    this.enabledRules.delete(ruleName);
-  }
+          const part1 = document.createElement("span");
+          part1.className = "scene-header-1";
+          part1.textContent = parsed.sceneNum;
+          Object.assign(part1.style, styles.getFormatStyles("scene-header-1"));
+          container.appendChild(part1);
 
-  enableAllRules(): void {
-    this.rules.forEach(rule => this.enabledRules.add(rule.name));
-  }
+          if (parsed.timeLocation) {
+            const part2 = document.createElement("span");
+            part2.className = "scene-header-2";
+            part2.textContent = parsed.timeLocation;
+            Object.assign(part2.style, styles.getFormatStyles("scene-header-2"));
+            container.appendChild(part2);
+          }
 
-  disableAllRules(): void {
-    this.enabledRules.clear();
-  }
-
-  private initializeDefaultRules(): void {
-    // Rule: Center scene headers
-    this.rules.push({
-      name: 'center-scene-headers',
-      description: 'Center scene headers',
-      priority: 10,
-      apply: (line, type) => {
-        if (type === 'scene-header') {
-          return line.trim();
+          newHTML += container.outerHTML;
+          return;
         }
-        return line;
       }
+
+      const div = document.createElement("div");
+      div.className = line.type;
+      div.textContent = line.text;
+      Object.assign(div.style, styles.getFormatStyles(line.type));
+      newHTML += div.outerHTML;
     });
 
-    // Rule: Left-align character names
-    this.rules.push({
-      name: 'left-align-characters',
-      description: 'Left-align character names',
-      priority: 9,
-      apply: (line, type) => {
-        if (type === 'character') {
-          return line.trim();
-        }
-        return line;
-      }
-    });
+    // 5. تطبيق التغييرات
+    editorElement.innerHTML = newHTML;
 
-    // Rule: Indent dialogue and parenthetical
-    this.rules.push({
-      name: 'indent-dialogue',
-      description: 'Indent dialogue and parenthetical',
-      priority: 8,
-      apply: (line, type) => {
-        if (type === 'dialogue' || type === 'parenthetical') {
-          return '  ' + line.trim();
-        }
-        return line;
-      }
-    });
-
-    // Rule: Add blank lines before scene headers
-    this.rules.push({
-      name: 'scene-header-spacing',
-      description: 'Add blank lines before scene headers',
-      priority: 7,
-      apply: (line, type, context) => {
-        if (type === 'scene-header' && context.previousType !== 'blank') {
-          return '\n' + line;
-        }
-        return line;
-      }
-    });
-
-    // Rule: Add blank lines after transitions
-    this.rules.push({
-      name: 'transition-spacing',
-      description: 'Add blank lines after transitions',
-      priority: 6,
-      apply: (line, type, context) => {
-        if (type === 'transition' && context.nextType !== 'blank') {
-          return line + '\n';
-        }
-        return line;
-      }
-    });
-
-    // Rule: Normalize Arabic numbers
-    this.rules.push({
-      name: 'normalize-arabic-numbers',
-      description: 'Convert Western numbers to Arabic',
-      priority: 5,
-      apply: (line) => {
-        return line.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[parseInt(d)]);
-      }
-    });
-
-    // Rule: Fix common Arabic spacing issues
-    this.rules.push({
-      name: 'fix-arabic-spacing',
-      description: 'Fix Arabic punctuation spacing',
-      priority: 4,
-      apply: (line) => {
-        // Add space before Arabic commas
-        line = line.replace(/([^\s])،/g, '$1 ،');
-        // Remove space before Arabic question mark
-        line = line.replace(/\s؟/g, '؟');
-        // Fix parentheses spacing
-        line = line.replace(/\s*\(\s*/g, ' (');
-        line = line.replace(/\s*\)\s*/g, ') ');
-        return line.trim();
-      }
-    });
-
-    // Rule: Capitalize scene headers properly
-    this.rules.push({
-      name: 'capitalize-scene-headers',
-      description: 'Capitalize scene header prefixes',
-      priority: 3,
-      apply: (line, type) => {
-        if (type === 'scene-header') {
-          return line.replace(/^(مشهد|م\.|scene)/i, (match) => {
-            if (match.toLowerCase() === 'scene') return 'SCENE';
-            return match.charAt(0).toUpperCase() + match.slice(1);
-          });
-        }
-        return line;
-      }
-    });
-
-    // Rule: Remove extra whitespace
-    this.rules.push({
-      name: 'remove-extra-whitespace',
-      description: 'Remove extra spaces and tabs',
-      priority: 2,
-      apply: (line) => {
-        return line.replace(/\s+/g, ' ').trim();
-      }
-    });
-
-    // Rule: Ensure proper colon spacing in character lines
-    this.rules.push({
-      name: 'character-colon-spacing',
-      description: 'Fix character line colon spacing',
-      priority: 1,
-      apply: (line, type) => {
-        if (type === 'character') {
-          // Ensure colon is at the end with no space before it
-          line = line.replace(/\s*[:：]\s*$/, ':');
-          // If no colon, add one (optional - can be disabled)
-          // if (!line.includes(':')) {
-          //   line = line + ':';
-          // }
-        }
-        return line;
-      }
-    });
-  }
-
-  private isInDialogueBlock(types: string[], index: number): boolean {
-    // Look back for character
-    for (let i = index - 1; i >= Math.max(0, index - 3); i--) {
-      if (types[i] === 'character') return true;
-      if (['scene-header', 'transition', 'action'].includes(types[i])) return false;
-    }
-    return false;
+    // تحديث المحرر
+    onUpdate();
   }
 }
