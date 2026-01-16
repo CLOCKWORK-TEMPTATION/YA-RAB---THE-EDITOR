@@ -1,55 +1,24 @@
 // src/utils/css.ts
 // ================
 // CSS Utilities
+// منقول 1:1 من THEEditor.tsx (الأسطر 489-500)
 //
 // Responsibilities:
 // - Convert CSS objects to strings
 // - Handle CSS-in-JS utilities
-// - CSS validation helpers
 
-export interface CSSProperties {
-  [key: string]: string | number | undefined;
-}
+import type React from "react";
 
 /**
- * Convert CSS object to CSS string
+ * @function cssObjectToString
+ * @description تحويل كائن CSS styles إلى string
+ * منقول 1:1 من THEEditor.tsx
  */
-export function cssObjectToString(styles: CSSProperties): string {
+export const cssObjectToString = (styles: React.CSSProperties): string => {
   return Object.entries(styles)
-    .filter(([_, value]) => value !== undefined && value !== null)
-    .map(([property, value]) => {
-      // Convert camelCase to kebab-case
-      const cssProperty = property.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
-      return `${cssProperty}: ${value}`;
+    .map(([key, value]) => {
+      const cssKey = key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+      return `${cssKey}: ${value}`;
     })
-    .join('; ');
-}
-
-/**
- * Create CSS string from object with semicolon
- */
-export function createCSSString(styles: CSSProperties): string {
-  const cssString = cssObjectToString(styles);
-  return cssString ? cssString + ';' : '';
-}
-
-/**
- * Merge multiple CSS objects
- */
-export function mergeCSS(...styles: CSSProperties[]): CSSProperties {
-  return Object.assign({}, ...styles);
-}
-
-/**
- * Validate CSS property name
- */
-export function isValidCSSProperty(property: string): boolean {
-  return /^-?[a-z-]+$/.test(property);
-}
-
-/**
- * Validate CSS value
- */
-export function isValidCSSValue(value: string): boolean {
-  return value.length > 0 && !/[\s{}()]/.test(value);
-}
+    .join("; ");
+};

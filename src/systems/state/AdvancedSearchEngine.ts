@@ -333,4 +333,94 @@ export class AdvancedSearchEngine {
 
     return matrix[b.length][a.length];
   }
+
+  // ==================== Methods for THEEditor handlers (glue layer) ====================
+
+  /**
+   * @method searchInContent
+   * @description البحث في المحتوى - يُستخدم من handlers في THEEditor.tsx
+   * @param content - النص الكامل للبحث فيه
+   * @param searchTerm - مصطلح البحث
+   * @returns Promise مع نتيجة البحث
+   */
+  async searchInContent(
+    content: string,
+    searchTerm: string
+  ): Promise<{
+    success: boolean;
+    totalMatches?: number;
+    matches?: Array<{ index: number; length: number }>;
+    error?: string;
+  }> {
+    try {
+      if (!searchTerm.trim()) {
+        return { success: false, error: "مصطلح البحث فارغ" };
+      }
+
+      const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escapedTerm, "gi");
+      const matches: Array<{ index: number; length: number }> = [];
+      let match;
+
+      while ((match = regex.exec(content)) !== null) {
+        matches.push({
+          index: match.index,
+          length: match[0].length,
+        });
+      }
+
+      return {
+        success: true,
+        totalMatches: matches.length,
+        matches,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * @method replaceInContent
+   * @description الاستبدال في المحتوى - يُستخدم من handlers في THEEditor.tsx
+   * @param content - النص الكامل
+   * @param searchTerm - مصطلح البحث
+   * @param replaceTerm - النص البديل
+   * @returns Promise مع معلومات الاستبدال
+   */
+  async replaceInContent(
+    content: string,
+    searchTerm: string,
+    replaceTerm: string
+  ): Promise<{
+    success: boolean;
+    patternSource?: string;
+    patternFlags?: string;
+    replaceText?: string;
+    replaceAll?: boolean;
+    error?: string;
+  }> {
+    try {
+      if (!searchTerm.trim()) {
+        return { success: false, error: "مصطلح البحث فارغ" };
+      }
+
+      const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      return {
+        success: true,
+        patternSource: escapedTerm,
+        patternFlags: "gi",
+        replaceText: replaceTerm,
+        replaceAll: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 }

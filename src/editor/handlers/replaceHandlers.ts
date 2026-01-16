@@ -1,105 +1,103 @@
 // src/editor/handlers/replaceHandlers.ts
 // ======================================
-// Replace Handlers from THEEditor.tsx
+// Replace Handlers from THEEditor.tsx (Lines 8309-8352, 8433-8476)
 //
 // Responsibilities:
 // - Handle replace operations
-// - Track replace history
-// - Validate replacements
+// - Handle character rename operations
 //
+// منقول 1:1 من THEEditor.tsx
 // NO search logic
 // NO state persistence
 
-export interface ReplaceOperation {
-  from: string;
-  to: string;
-  position: number;
-  timestamp: number;
-}
+import type React from "react";
+import type { AdvancedSearchEngine } from "../../systems/state/AdvancedSearchEngine";
+import { applyRegexReplacementToTextNodes } from "../../../modules/domTextReplacement";
 
-export interface ReplaceHandlers {
-  replaceAt: (position: number, replacement: string) => void;
-  replaceInSelection: (replacement: string) => void;
-  undoLastReplace: () => void;
-  getReplaceHistory: () => ReplaceOperation[];
-}
+/**
+ * @function createHandleCharacterRename
+ * @description معالج إعادة تسمية الشخصيات
+ * منقول 1:1 من THEEditor.tsx (سطر 8312-8352)
+ */
+export const createHandleCharacterRename = (
+  oldCharacterName: string,
+  newCharacterName: string,
+  editorRef: React.RefObject<HTMLDivElement | null>,
+  updateContent: () => void,
+  setShowCharacterRename: (show: boolean) => void,
+  setOldCharacterName: (name: string) => void,
+  setNewCharacterName: (name: string) => void,
+) => {
+  return () => {
+    if (!oldCharacterName.trim() || !newCharacterName.trim() || !editorRef.current) return;
 
-export function createReplaceHandlers(
-  getText: () => string[],
-  setText: (text: string[]) => void,
-  getSelection: () => { start: number; end: number } | null
-): ReplaceHandlers {
-  const replaceHistory: ReplaceOperation[] = [];
+    const regex = new RegExp(`^\\s*${oldCharacterName}\\s*$`, "gmi");
 
-  function replaceAt(position: number, replacement: string) {
-    const text = getText();
-    if (position < 0 || position >= text.length) return;
-    
-    const originalLine = text[position];
-    text[position] = replacement;
-    setText(text);
-    
-    replaceHistory.push({
-      from: originalLine,
-      to: replacement,
-      position,
-      timestamp: Date.now()
-    });
-    
-    // Keep history size manageable
-    if (replaceHistory.length > 100) {
-      replaceHistory.splice(0, 50);
+    if (editorRef.current) {
+      const replacementsApplied = applyRegexReplacementToTextNodes(
+        editorRef.current,
+        regex.source,
+        regex.flags,
+        newCharacterName.toUpperCase(),
+        true,
+      );
+
+      if (replacementsApplied > 0) {
+        updateContent();
+        alert(
+          `تم إعادة تسمية الشخصية "${oldCharacterName}" إلى "${newCharacterName}" (${replacementsApplied} حالة)`,
+        );
+        setShowCharacterRename(false);
+        setOldCharacterName("");
+        setNewCharacterName("");
+      } else {
+        alert(`لم يتم العثور على الشخصية "${oldCharacterName}" لإعادة تسميتها.`);
+        setShowCharacterRename(false);
+      }
     }
-  }
-
-  function replaceInSelection(replacement: string) {
-    const selection = getSelection();
-    if (!selection) return;
-    
-    const text = getText();
-    const { start, end } = selection;
-    
-    // Replace each line in selection
-    for (let i = start; i <= end && i < text.length; i++) {
-      const originalLine = text[i];
-      text[i] = replacement;
-      
-      replaceHistory.push({
-        from: originalLine,
-        to: replacement,
-        position: i,
-        timestamp: Date.now()
-      });
-    }
-    
-    setText(text);
-    
-    // Keep history size manageable
-    if (replaceHistory.length > 100) {
-      replaceHistory.splice(0, 50);
-    }
-  }
-
-  function undoLastReplace() {
-    if (replaceHistory.length === 0) return;
-    
-    const lastOperation = replaceHistory.pop()!;
-    const text = getText();
-    
-    if (lastOperation.position < text.length) {
-      text[lastOperation.position] = lastOperation.from;
-      setText(text);
-    }
-  }
-
-  function getReplaceHistory() {
-    return [...replaceHistory];
-  }
-
-  return {
-    replaceAt,
-    replaceInSelection,
-    undoLastReplace,
-    getReplaceHistory
   };
-}
+};
+
+/**
+ * @function createHandleReplace
+ * @description معالج الاستبدال في المحتوى
+ * منقول 1:1 من THEEditor.tsx (سطر 8436-8476)
+ */
+export const createHandleReplace = (
+  searchTerm: string,
+  replaceTerm: string,
+  editorRef: React.RefObject<HTMLDivElement | null>,
+  searchEngine: React.MutableRefObject<AdvancedSearchEngine>,
+  updateContent: () => void,
+  setShowReplaceDialog: (show: boolean) => void,
+  setSearchTerm: (term: string) => void,
+  setReplaceTerm: (term: string) => void,
+) => {
+  return async () => {
+    if (!searchTerm.trim() || !editorRef.current) return;
+
+    const content = editorRef.current.innerText;
+    const result = await searchEngine.current.replaceInContent(content, searchTerm, replaceTerm);
+
+    if (result.success && editorRef.current) {
+      const replacementsApplied = applyRegexReplacementToTextNodes(
+        editorRef.current,
+        result.patternSource as string,
+        result.patternFlags as string,
+        result.replaceText as string,
+        result.replaceAll !== false,
+      );
+
+      if (replacementsApplied > 0) {
+        updateContent();
+      }
+
+      alert(`تم استبدال ${replacementsApplied} حالة من "${searchTerm}" بـ "${replaceTerm}"`);
+      setShowReplaceDialog(false);
+      setSearchTerm("");
+      setReplaceTerm("");
+    } else {
+      alert(`فشل الاستبدال: ${result.error}`);
+    }
+  };
+};
